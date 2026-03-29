@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Irrigation Energy Calculator (MP)</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+    <!-- Point-in-polygon -->
+    <script src="https://unpkg.com/leaflet-pip/leaflet-pip.min.js"></script>
+
+    <style>
+        body { font-family: Arial; margin: 0; }
+        h2 { text-align: center; padding: 10px; }
+        #map { height: 60vh; }
+
+        .panel {
+            padding: 15px;
+            background: #f5f5f5;
+        }
+
+        input, select, button {
+            margin: 5px;
+            padding: 6px;
+        }
+    </style>
+</head>
+
+<body>
+
+<h2>Irrigation Energy Calculator (Madhya Pradesh)</h2>
+
+<div id="map"></div>
+
+<div class="panel">
+
+    <b>Selected Location:</b>
+    <span id="coords">Click on map</span>
+
+    <br>
+    <b>District:</b>
+    <span id="district">Not selected</span>
+
+    <br><br>
+
+    <b>Or enter location manually:</b><br>
+
+    Latitude:
+    <input type="number" id="lat_input" step="0.0001" placeholder="23.25">
+
+    Longitude:
+    <input type="number" id="lon_input" step="0.0001" placeholder="77.41">
+
+    <button onclick="useTypedLocation()">Use this location</button>
+
+    <br><br>
+
+    <label>Crop:</label>
+    <select id="crop">
+        <option value="wheat">Wheat</option>
+        <option value="chickpea">Chickpea</option>
+        <option value="mustard">Mustard</option>
+        <option value="lentils">Lentils</option>
+        <option value="coriander">Coriander</option>
+    </select>
+
+    <br>
+
+    <label>Land Area (hectares):</label>
+    <input type="number" id="area" value="1">
+
+    <br>
+
+    <label>Electricity Price (₹/kWh):</label>
+    <input type="number" id="price" value="6">
+
+    <br><br>
+
+    <button onclick="calculate()">Calculate</button>
+
+    <h3 id="result"></h3>
+
+</div>
+
+<script>
+
+let lat = null;
+let lon = null;
+let marker = null;
+let mpLayer = null;
+
+// =========================
+// INIT MAP
+// =========================
+const map = L.map('map').setView([23.5, 78], 6);
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+// =========================
+// LOAD GEOJSON (FIXED)
+// =========================
+fetch('mp_districts.geojson')
+.then(res => res.json())
+.then(data => {
+
+    mpLayer = L.geoJSON(data, {
+        interactive: false,
+        style: {
+            color: "blue",
+            weight: 1,
+            fillOpacity: 0
+        }
+    }).addTo(map);
+
+    // 🔥 FIX: must be inside here
+    mpLayer.bringToBack();
+});
+
+// =========================
+// CHECK INSIDE MP
+// =========================
+function isInsideMP(lat, lon) {
+
+    if (!mpLayer) return false;
+
+    const point = [lon, lat]; // GeoJSON order
+
+    const result = leafletPip.pointInLayer(point, mpLayer);
+
+    return result.length > 0;
+}
+
+// =========================
+// GET DISTRICT
+// =========================
+function getDistrict(lat, lon) {
+
+    if (!mpLayer) return "Loading...";
+
+    const point = [lon, lat];
+
+    const result = leafletPip.pointInLayer(point, mpLayer);
+
+    if (result.length > 0) {
+        return result[0].feature.properties.dtname;
+    }
+
+    return "Unknown";
+}
+
+// =========================
+// MAP CLICK
+// =========================
+map.on('click', function(e) {
+
+    if (!mpLayer) {
+        alert("Map still loading, please wait...");
+        return;
+    }
+
+    lat = e.latlng.lat;
+    lon = e.latlng.lng;
+
+    if (!isInsideMP(lat, lon)) {
+        alert("Please select a location inside Madhya Pradesh");
+        lat = null;
+        lon = null;
+        return;
+    }
+
+    document.getElementById("coords").innerText =
+        lat.toFixed(4) + ", " + lon.toFixed(4);
+
+    const district = getDistrict(lat, lon);
+    document.getElementById("district").innerText = district;
+
+    if (marker) map.removeLayer(marker);
+    marker = L.marker([lat, lon]).addTo(map);
+});
+
+// =========================
+// MANUAL INPUT
+// =========================
+function useTypedLocation() {
+
+    if (!mpLayer) {
+        alert("Map still loading, please wait...");
+        return;
+    }
+
+    const latInput = parseFloat(document.getElementById("lat_input").value);
+    const lonInput = parseFloat(document.getElementById("lon_input").value);
+
+    if (isNaN(latInput) || isNaN(lonInput)) {
+        alert("Enter valid coordinates");
+        return;
+    }
+
+    if (!isInsideMP(latInput, lonInput)) {
+        alert("Location must be inside Madhya Pradesh");
+        return;
+    }
+
+    lat = latInput;
+    lon = lonInput;
+
+    document.getElementById("coords").innerText =
+        lat.toFixed(4) + ", " + lon.toFixed(4);
+
+    const district = getDistrict(lat, lon);
+    document.getElementById("district").innerText = district;
+
+    map.setView([lat, lon], 8);
+
+    if (marker) map.removeLayer(marker);
+    marker = L.marker([lat, lon]).addTo(map);
+}
+
+// =========================
+// CALCULATE
+// =========================
+function calculate() {
+
+    if (lat === null || lon === null) {
+        alert("Select location first");
+        return;
+    }
+
+    const crop = document.getElementById("crop").value;
+    const area = document.getElementById("area").value;
+    const price = document.getElementById("price").value;
+
+    const url = `http://127.0.0.1:8000/calculate?lat=${lat}&lon=${lon}&crop=${crop}&area=${area}&price=${price}`;
+
+    fetch(url)
+    .then(res => res.json())
+    .then(data => {
+
+        if (data.error) {
+            document.getElementById("result").innerText = data.error;
+            return;
+        }
+
+        document.getElementById("result").innerHTML =
+            `District: ${document.getElementById("district").innerText}<br>
+             Energy per hectare: ${data.results.energy_per_hectare_kwh} kWh<br>
+             Total Energy: ${data.results.total_energy_kwh} kWh<br>
+             Total Cost: ₹${data.results.total_cost_rs}`;
+    })
+    .catch(() => {
+        document.getElementById("result").innerText = "Server error";
+    });
+}
+
+</script>
+
+</body>
+</html>
